@@ -7,7 +7,7 @@ on:
       - 'src/app/agents/customerLoyaltyAgent_initializer.py'
       - 'src/app/tools/discountLogic.py'
       - 'src/prompts/CustomerLoyaltyAgentPrompt.txt'
-      - '.github/workflows/deploy-customer-loyalty-agent.yml'
+      - '.github/workflows/0502_sample_agent_deployment.yml'
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
