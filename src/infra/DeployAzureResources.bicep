@@ -22,7 +22,7 @@ var registrySku = 'Standard'
 var tags = {
   Project: 'Tech Workshop L300 - AI Apps and Agents'
   Environment: 'Lab'
-  Owner: deployer().userPrincipalName
+  Owner: userPrincipalId
   SecurityControl: 'ignore'
   CostControl: 'ignore'
 }
