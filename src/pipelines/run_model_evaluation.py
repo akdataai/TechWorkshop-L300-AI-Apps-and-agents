@@ -108,19 +108,19 @@ def main() -> int:
             "relevance": {
                 "column_mapping": {
                     "query": "${data.query}",
-                    "response": "${outputs.response}",
+                    "response": "${target.response}",
                 }
             },
             "coherence": {
                 "column_mapping": {
                     "query": "${data.query}",
-                    "response": "${outputs.response}",
+                    "response": "${target.response}",
                 }
             },
             "similarity": {
                 "column_mapping": {
                     "query": "${data.query}",
-                    "response": "${outputs.response}",
+                    "response": "${target.response}",
                     "ground_truth": "${data.ground_truth}",
                 }
             },
