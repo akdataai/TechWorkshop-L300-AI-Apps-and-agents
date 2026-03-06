@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Exact ACK response",
+    "prompt": "Reply with exactly ACK_ZAVA_SMOKE_TEST and no extra words.",
+    "expected_contains": ["ack_zava_smoke_test"]
+  },
+  {
+    "name": "Paint keyword response",
+    "prompt": "In one short sentence, mention the word paint.",
+    "expected_contains": ["paint"]
+  },
+  {
+    "name": "Inventory capability yes/no",
+    "prompt": "Return exactly YES if you can assist with inventory checks.",
+    "expected_contains": ["yes"]
+  }
+]

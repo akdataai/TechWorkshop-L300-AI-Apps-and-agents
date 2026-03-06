@@ -1,0 +1,338 @@
+name: Full Automation - Infra, Deploy, Validate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/full_automation_deploy_validate.yml'
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: "Azure Resource Group to deploy into"
+        required: false
+        default: ""
+      location:
+        description: "Azure region for infrastructure deployment"
+        required: false
+        default: ""
+      run_model_evaluation:
+        description: "Run model evaluation"
+        required: true
+        type: boolean
+        default: true
+      run_agent_evaluation:
+        description: "Run agent evaluation"
+        required: true
+        type: boolean
+        default: true
+      run_prompt_smoke_tests:
+        description: "Run prompt smoke tests with tracing"
+        required: true
+        type: boolean
+        default: true
+      run_red_teaming:
+        description: "Run red teaming scan"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: full-automation-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.12'
+  DEFAULT_RESOURCE_GROUP: techworkshop-l300-ai-agents
+  DEFAULT_LOCATION: eastus2
+
+jobs:
+  deploy-infra:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      resource_group: ${{ steps.context.outputs.resource_group }}
+      location: ${{ steps.context.outputs.location }}
+      app_name: ${{ steps.deployment_outputs.outputs.application_name }}
+      acr_name: ${{ steps.deployment_outputs.outputs.container_registry_name }}
+      image_uri: ${{ steps.image.outputs.image_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve deployment context
+        id: context
+        shell: bash
+        run: |
+          rg="${{ env.DEFAULT_RESOURCE_GROUP }}"
+          loc="${{ env.DEFAULT_LOCATION }}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ -n "${{ inputs.resource_group }}" ]]; then rg="${{ inputs.resource_group }}"; fi
+            if [[ -n "${{ inputs.location }}" ]]; then loc="${{ inputs.location }}"; fi
+          fi
+
+          echo "resource_group=$rg" >> "$GITHUB_OUTPUT"
+          echo "location=$loc" >> "$GITHUB_OUTPUT"
+          echo "Using resource group: $rg"
+          echo "Using location: $loc"
+
+      - name: Azure login (OIDC)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login (AZURE_CREDENTIALS fallback)
+        if: ${{ !(secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '') }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure resource group exists
+        run: |
+          az group create \
+            --name "${{ steps.context.outputs.resource_group }}" \
+            --location "${{ steps.context.outputs.location }}"
+
+      - name: Deploy Bicep infrastructure
+        run: |
+          az deployment group create \
+            --resource-group "${{ steps.context.outputs.resource_group }}" \
+            --template-file src/infra/DeployAzureResources.bicep \
+            --name "full-automation-${{ github.run_id }}"
+
+      - name: Wait for deployment completion
+        run: |
+          az deployment group wait \
+            --resource-group "${{ steps.context.outputs.resource_group }}" \
+            --name "full-automation-${{ github.run_id }}" \
+            --created
+
+      - name: Read deployment outputs
+        id: deployment_outputs
+        shell: bash
+        run: |
+          rg="${{ steps.context.outputs.resource_group }}"
+          deployment_name="full-automation-${{ github.run_id }}"
+
+          app_name=$(az deployment group show -g "$rg" -n "$deployment_name" --query "properties.outputs.application_name.value" -o tsv)
+          acr_name=$(az deployment group show -g "$rg" -n "$deployment_name" --query "properties.outputs.container_registry_name.value" -o tsv)
+
+          if [[ -z "$app_name" || -z "$acr_name" ]]; then
+            echo "Failed to resolve deployment outputs." >&2
+            exit 1
+          fi
+
+          echo "application_name=$app_name" >> "$GITHUB_OUTPUT"
+          echo "container_registry_name=$acr_name" >> "$GITHUB_OUTPUT"
+
+      - name: Determine Web App image URI
+        id: image
+        shell: bash
+        run: |
+          rg="${{ steps.context.outputs.resource_group }}"
+          app_name="${{ steps.deployment_outputs.outputs.application_name }}"
+          linux_fx_version=$(az webapp config show -g "$rg" -n "$app_name" --query linuxFxVersion -o tsv)
+          image_uri="${linux_fx_version#DOCKER|}"
+
+          if [[ -z "$image_uri" ]]; then
+            echo "Unable to determine image URI from Web App config" >&2
+            exit 1
+          fi
+
+          if [[ "$image_uri" != *:* ]]; then
+            image_uri="${image_uri}:latest"
+          fi
+
+          echo "image_uri=$image_uri" >> "$GITHUB_OUTPUT"
+          echo "Will push image: $image_uri"
+
+  build-and-push:
+    name: Build and Push Container
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secret
+        run: 'echo "$ENV" > src/.env'
+        shell: bash
+        env:
+          ENV: ${{ secrets.ENV }}
+
+      - name: Azure login (OIDC)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login (AZURE_CREDENTIALS fallback)
+        if: ${{ !(secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '') }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: |
+          az acr login --name "${{ needs.deploy-infra.outputs.acr_name }}"
+
+      - name: Build and push container image
+        run: |
+          docker build -t "${{ needs.deploy-infra.outputs.image_uri }}" src/
+          docker push "${{ needs.deploy-infra.outputs.image_uri }}"
+
+      - name: Update App Service container image
+        run: |
+          rg="${{ needs.deploy-infra.outputs.resource_group }}"
+          app_name="${{ needs.deploy-infra.outputs.app_name }}"
+          acr_name="${{ needs.deploy-infra.outputs.acr_name }}"
+          image_uri="${{ needs.deploy-infra.outputs.image_uri }}"
+
+          acr_username=$(az acr credential show --name "$acr_name" --query username -o tsv)
+          acr_password=$(az acr credential show --name "$acr_name" --query passwords[0].value -o tsv)
+
+          az webapp config container set \
+            --resource-group "$rg" \
+            --name "$app_name" \
+            --container-image-name "$image_uri" \
+            --container-registry-url "https://${acr_name}.azurecr.io" \
+            --container-registry-user "$acr_username" \
+            --container-registry-password "$acr_password"
+
+          az webapp restart --resource-group "$rg" --name "$app_name"
+
+  deploy-agents-and-data:
+    name: Deploy Agents and Data
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secret
+        run: 'echo "$ENV" > src/.env'
+        shell: bash
+        env:
+          ENV: ${{ secrets.ENV }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+
+      - name: Azure login (OIDC)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login (AZURE_CREDENTIALS fallback)
+        if: ${{ !(secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '') }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ingest catalog data into Cosmos DB
+        working-directory: src
+        run: python pipelines/ingest_to_cosmos.py
+
+      - name: Deploy all agents
+        working-directory: src
+        run: python pipelines/deploy_all_agents.py
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts-${{ github.run_id }}
+          path: src/artifacts/*
+          if-no-files-found: ignore
+
+  post-deploy-validation:
+    name: Post-Deploy Validation
+    runs-on: ubuntu-latest
+    needs: deploy-agents-and-data
+    environment: dev
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create .env file from secret
+        run: 'echo "$ENV" > src/.env'
+        shell: bash
+        env:
+          ENV: ${{ secrets.ENV }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+
+      - name: Azure login (OIDC)
+        if: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure login (AZURE_CREDENTIALS fallback)
+        if: ${{ !(secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '') }}
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Run model evaluation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_model_evaluation }}
+        working-directory: src
+        run: python pipelines/run_model_evaluation.py
+
+      - name: Run agent evaluation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_agent_evaluation }}
+        working-directory: src
+        run: python pipelines/run_agent_evaluation.py
+
+      - name: Run prompt smoke tests with tracing
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_prompt_smoke_tests }}
+        working-directory: src
+        run: python pipelines/run_prompt_smoke_tests.py
+
+      - name: Run red teaming scan
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_red_teaming }}
+        working-directory: src
+        run: python app/agents/redTeamingAgent_initializer.py
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-artifacts-${{ github.run_id }}
+          path: src/artifacts/*
+          if-no-files-found: ignore

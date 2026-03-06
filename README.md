@@ -6,6 +6,43 @@ This lab teaches you how to design and build AI applications and agents using Mi
 
 The step by step instructions for this lab can be found in the [AI Apps and agents guide](https://microsoft.github.io/TechWorkshop-L300-AI-Apps-and-agents).
 
+## Full GitHub Actions Automation
+
+This repository now includes an end-to-end workflow at `.github/workflows/full_automation_deploy_validate.yml` that:
+
+1. Deploys/updates Azure infrastructure via `src/infra/DeployAzureResources.bicep`
+2. Builds and pushes the chat app container image to ACR
+3. Updates Azure App Service to the latest container image
+4. Ingests catalog data into Cosmos DB
+5. Deploys/updates all Foundry agents
+6. Runs post-deployment quality checks:
+	- Model evaluation (`src/pipelines/run_model_evaluation.py`)
+	- Agent evaluation (`src/pipelines/run_agent_evaluation.py`)
+	- Prompt smoke tests with tracing (`src/pipelines/run_prompt_smoke_tests.py`)
+	- Red teaming scan (`src/app/agents/redTeamingAgent_initializer.py`)
+
+### Required GitHub repository secrets
+
+- `AZURE_CREDENTIALS`
+- `ENV`
+
+### Optional (recommended) OIDC secrets for Azure login
+
+If set, the workflow uses OIDC login instead of `AZURE_CREDENTIALS`:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+### Optional workflow_dispatch inputs
+
+- `resource_group`
+- `location`
+- `run_model_evaluation`
+- `run_agent_evaluation`
+- `run_prompt_smoke_tests`
+- `run_red_teaming`
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
