@@ -90,9 +90,15 @@ jobs:
 
       - name: Ensure resource group exists
         run: |
-          az group create \
-            --name "${{ steps.context.outputs.resource_group }}" \
-            --location "${{ steps.context.outputs.location }}"
+          rg="${{ steps.context.outputs.resource_group }}"
+          loc="${{ steps.context.outputs.location }}"
+
+          if [[ "$(az group exists --name "$rg")" == "true" ]]; then
+            existing_location=$(az group show --name "$rg" --query location -o tsv)
+            echo "Resource group '$rg' already exists in '$existing_location'. Reusing it."
+          else
+            az group create --name "$rg" --location "$loc"
+          fi
 
       - name: Deploy Bicep infrastructure
         run: |
