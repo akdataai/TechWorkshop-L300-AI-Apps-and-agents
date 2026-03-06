@@ -53,7 +53,7 @@ def build_openai_client(model_config: Dict[str, str]) -> AzureOpenAI:
 
 
 def target_factory(client: AzureOpenAI, deployment: str):
-    def model_target(query: str, context: str = "", **_: Any) -> Dict[str, str]:
+    def model_target(query: str, context: str = "") -> Dict[str, str]:
         user_prompt = (
             f"Context:\n{context}\n\nQuestion:\n{query}\n\n"
             "Respond concisely and use the context when relevant."
