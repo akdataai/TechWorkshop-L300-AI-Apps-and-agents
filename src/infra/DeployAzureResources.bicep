@@ -6,6 +6,12 @@ param userPrincipalId string = deployer().objectId
 @description('Primary location for all resources.')
 param location string = resourceGroup().location
 
+@description('Whether to update resource group tags using a subscription-scoped module.')
+param enableSubscriptionTagUpdate bool = true
+
+@description('Whether to create role assignments in the deployment.')
+param enableRoleAssignments bool = true
+
 var cosmosDbName = '${uniqueString(resourceGroup().id)}-cosmosdb'
 var cosmosDbDatabaseName = 'zava'
 var storageAccountName = '${uniqueString(resourceGroup().id)}sa'
@@ -28,7 +34,7 @@ var tags = {
 }
 
 // Ensure the current resource group has the required tag via a subscription-scoped module
-module updateRgTags 'updateRgTags.bicep' = {
+module updateRgTags 'updateRgTags.bicep' = if (enableSubscriptionTagUpdate) {
   name: 'updateRgTags'
   scope: subscription()
   params: {
@@ -240,7 +246,7 @@ var cognitiveServicesOpenAIUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 var cognitiveServicesContributorRoleId = '25fbc0a9-bd7c-42a3-aa1a-3b75d497ee68'
 
 @description('Assigns Cosmos DB Built-in Data Contributor role to the specified user')
-resource cosmosDbDataContributorRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = {
+resource cosmosDbDataContributorRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-04-15' = if (enableRoleAssignments) {
   name: guid(cosmosDbAccount.id, userPrincipalId, cosmosDbBuiltInDataContributorRoleId)
   parent: cosmosDbAccount
   properties: {
@@ -252,7 +258,7 @@ resource cosmosDbDataContributorRoleAssignment 'Microsoft.DocumentDB/databaseAcc
 
 // Role assignments for Cosmos DB managed identity
 @description('Assigns Cognitive Services OpenAI User role to Cosmos DB on AI Project')
-resource cosmosDbProjectOpenAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource cosmosDbProjectOpenAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
   name: guid(aiProject.id, cosmosDbAccount.id, cognitiveServicesOpenAIUserRoleId)
   scope: aiProject
   properties: {
@@ -263,7 +269,7 @@ resource cosmosDbProjectOpenAIUserRole 'Microsoft.Authorization/roleAssignments@
 }
 
 @description('Assigns Cognitive Services OpenAI User role to Cosmos DB on Microsoft Foundry')
-resource cosmosDbFoundryOpenAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource cosmosDbFoundryOpenAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
   name: guid(aiFoundry.id, cosmosDbAccount.id, cognitiveServicesOpenAIUserRoleId)
   scope: aiFoundry
   properties: {
@@ -274,7 +280,7 @@ resource cosmosDbFoundryOpenAIUserRole 'Microsoft.Authorization/roleAssignments@
 }
 
 @description('Assigns Cognitive Services Contributor role to Cosmos DB on AI Project')
-resource cosmosDbProjectContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource cosmosDbProjectContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
   name: guid(aiProject.id, cosmosDbAccount.id, cognitiveServicesContributorRoleId)
   scope: aiProject
   properties: {

@@ -105,6 +105,7 @@ jobs:
           az deployment group create \
             --resource-group "${{ steps.context.outputs.resource_group }}" \
             --template-file src/infra/DeployAzureResources.bicep \
+            --parameters enableSubscriptionTagUpdate=false enableRoleAssignments=false \
             --name "full-automation-${{ github.run_id }}"
 
       - name: Wait for deployment completion
