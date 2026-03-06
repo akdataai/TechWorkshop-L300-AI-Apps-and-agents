@@ -1,5 +1,5 @@
 {
-    "python.defaultInterpreterPath": "/opt/homebrew/bin/python3",
+    "python.defaultInterpreterPath": "/opt/homebrew/bin/python3.13",
     "python.terminal.activateEnvironment": false,
     "python-envs.defaultEnvManager": "ms-python.python:system"
 }
